@@ -5,6 +5,14 @@ from bs4 import BeautifulSoup
 EROWID_BASE_URI = 'https://erowid.org/experiences/exp.php'
 EXP_COUNT = 10000
 
+
+def _sanitize_substance_for_path(substance):
+	substance = substance.strip().lower()
+	substance = substance.replace('/', '+').replace('\\', '+')
+	if not substance:
+		substance = 'unknown'
+	return substance
+
 #helper function that takes response body and extracts just the user drug experience
 def extract_experience_text(text):
 	try:
@@ -25,13 +33,14 @@ for index in xrange(1, EXP_COUNT):
 		experienceText = extract_experience_text(responseText)
 		soup = BeautifulSoup(responseText, "html5lib")
 		drug = soup.find('div', {'class': 'substance'}).getText().strip().lower()
+		safe_drug = _sanitize_substance_for_path(drug)
 
 		print drug,
 		#write experience to folder
 		#TODO found problem! people use drug-a/drug-b to denote combination
 		#since we plug the string straight in, it thinks that's a nested directory
 		#MUST RESCRAPE! 
-		folderPath = './experiences/' + drug
+		folderPath = './experiences/' + safe_drug
 
 		if not os.path.exists(folderPath):
 			os.makedirs(folderPath)

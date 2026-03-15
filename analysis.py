@@ -1,94 +1,63 @@
-import numpy as np
+import requests
 import os
-import string
-from nltk.stem.porter import *
-from sklearn.metrics.pairwise import cosine_similarity
-from scipy import sparse
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.decomposition import NMF, LatentDirichletAllocation, TruncatedSVD
+import time
+from bs4 import BeautifulSoup
 
-#DEFINE CONSTANTS
-MINIMUM_EXPERIENCE_COUNT = 30
+EROWID_BASE_URI = 'https://erowid.org/experiences/exp.php'
+EXP_COUNT = 10000
+DELAY = 1.5  # seconds between requests
 
-stemmer = PorterStemmer()
+def _sanitize_substance_for_path(substance):
+    substance = substance.strip().lower()
+    substance = substance.replace('/', '+').replace('\\', '+')
+    return substance if substance else 'unknown'
 
-#load stopwords
-stopword_path = 'stopwords_en.txt'
-with open(stopword_path, 'r') as stopwordFile:
-	stopwords = [word.strip() for word in stopwordFile.readlines()]
+def extract_experience_text(text):
+    try:
+        begin_delimiter = '<!-- Start Body -->'
+        begin = text.index(begin_delimiter) + len(begin_delimiter)
+        end = text.index('<!-- End Body -->')
+        return text[begin:end].strip()
+    except ValueError:
+        return ''
 
-trainDir = './experiences/'
+session = requests.Session()
+session.headers.update({'User-Agent': 'Mozilla/5.0'})
 
-vectorizer = CountVectorizer(min_df= 1)
-corpus = []
+for index in range(1, EXP_COUNT):
+    try:
+        response = session.get(EROWID_BASE_URI, params={'ID': index}, timeout=10)
+        response.raise_for_status()
 
-def print_top_words(model, feature_names, n_top_words):
-    for topic_idx, topic in enumerate(model.components_):
-        print "Topic #%d:" % (topic_idx + 1)
-        print " ".join([feature_names[i]
-                        for i in topic.argsort()[:-n_top_words - 1:-1]]) + '\n'
+        responseText = response.text
+        experienceText = extract_experience_text(responseText)
 
-#iterate over experiences, treat the data, and add to corpus
-#filter only to read from directories with more than 8 files
-categories = [category for category in os.listdir(trainDir) if len(os.listdir(trainDir + '/' + category)) > MINIMUM_EXPERIENCE_COUNT]
-print categories
-for drug in categories:
-	path = trainDir + drug
-	aggregatedText = ''
+        if not experienceText:
+            print(f"[{index}] empty experience, skipping")
+            continue
 
-	#TODO should just be for experience in os.listdir(path)
-	#but since the scrape failed (I think due to slashes)
-	#we have to make sure it's not one of the ones that messed up
-	for experience in [e for e in os.listdir(path) if not os.path.isdir(e)]:
-		expPath = path + '/' + experience
-		print expPath
-		with open(expPath, 'r') as experienceFile:
-			words = experienceFile.read().strip().split()
+        soup = BeautifulSoup(responseText, "html.parser")  # html5lib was overkill here
+        
+        substance_tag = soup.find('div', {'class': 'substance'})
+        if not substance_tag:
+            print(f"[{index}] no substance tag, skipping")
+            continue
 
-			#eliminate stopwords, stem the remaining terms
-			editedWords = [word.strip().strip(string.punctuation).lower() for word in words if word.strip().strip(string.punctuation).lower() not in stopwords]
-			editedWords = [stemmer.stem(word) for word in editedWords]
-			aggregatedText += ' '.join(editedWords)
+        drug = substance_tag.getText().strip().lower()
+        safe_drug = _sanitize_substance_for_path(drug)
 
-	#have a distinct corpus for each drug
-	corpus.append(aggregatedText)
+        folder_path = f'./experiences/{safe_drug}'
+        os.makedirs(folder_path, exist_ok=True)  # no need for manual exists check
 
-#fit the corpus
-x = vectorizer.fit_transform(corpus)
-feature_names = vectorizer.get_feature_names()
-countData =  x.toarray()
+        file_path = f'{folder_path}/{index}.txt'
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(experienceText)
 
-#tf_idf transform
-transformer = TfidfTransformer(smooth_idf= False)
-tf_idf = transformer.fit_transform(countData).toarray()
+        print(f"[{index}] {drug} → saved")
 
-#perform singular value decomposition
-svd = TruncatedSVD(n_components= 8)
-svdTransform = svd.fit_transform(tf_idf)
-print(svdTransform)
+    except requests.RequestException as e:
+        print(f"[{index}] network error: {e}")
+    except Exception as e:
+        print(f"[{index}] error: {e}")
 
-#perform non-neg matrix factorization
-nmf = NMF(n_components= 8)
-nmfTransform = nmf.fit_transform(tf_idf)
-print(nmfTransform)
-
-print "SVD TOPICS\n-=-=-=-=-=-=-"
-print_top_words(svd, feature_names, 10)
-
-print "NMF TOPICS\n-=-=-=-=-=-=-"
-print_top_words(nmf, feature_names, 10)
-
-nmf_transform_sparse = sparse.csr_matrix(nmfTransform)
-similarities = cosine_similarity(nmf_transform_sparse)
-
-sortedIndices = np.argsort(similarities, axis= 1)
-
-#the most similar drug will always be itself (which is a good sign!)
-#so must find the SECOND most similar, which will be a different drug
-maximumIndices = sortedIndices[:,-2]
-
-for index, drug in enumerate(categories):
-	print "Drug: " + drug
-	print "Most similar: " + categories[maximumIndices[index]]
-	print "=-=--=-=-=-=-=-=-"
+    time.sleep(DELAY)
