@@ -1,0 +1,183 @@
+# EROWID NLP v2 — Cursor Agent Rules
+# ============================================================
+# Этот файл даёт агенту полный контекст о проекте.
+# Читай внимательно перед любым действием с файлами.
+# ============================================================
+
+## ЦЕЛЬ ПРОЕКТА
+
+Современный NLP/ML анализ трип-репортов с платформы Erowid.
+Форк репозитория Monkeyanator/erowid-lsa (2016) — переосмысленный полностью.
+
+Задачи:
+- Классификация вещества по тексту трипа (угадать что принял человек)
+- Harm reduction: "стоит ли беспокоиться об этом эффекте?"
+- Семантический анализ: BERTopic, UMAP, HDBSCAN кластеризация
+- SHAP интерпретация: что модель реально выучила
+- Сравнение результатов 2016 (LSA/sklearn) vs 2025 (transformers)
+- Временной анализ: как изменились трипы и лексика за 9 лет
+
+---
+
+## КРИТИЧЕСКИ ВАЖНО — СТРУКТУРА ДАННЫХ
+
+### ⚠️ НИКОГДА НЕ УДАЛЯТЬ И НЕ ИЗМЕНЯТЬ:
+
+```
+EROWID-2026/
+├── core-experiences_2016/   ← ОРИГИНАЛЬНЫЕ данные 2016 года. ТОЛЬКО ЧТЕНИЕ.
+├── experiences_2016/        ← ОРИГИНАЛЬНЫЕ данные 2016 года. ТОЛЬКО ЧТЕНИЕ.
+├── erowid-scrape.py         ← скрапер (можно обновлять, но осторожно)
+└── stopwords_en.txt         ← стоп-слова
+```
+
+### Почему нельзя трогать core-experiences_2016 и experiences_2016:
+Это **исторические данные 2016 года** — они нужны для сравнения "тогда vs сейчас".
+Без них невозможно провести temporal analysis и сравнить с baseline.
+Если случайно удалишь — восстановить только через git clone оригинала.
+
+### Новые данные (скрапер 2025) сохраняй в:
+```
+data/
+├── raw/              ← свежие .txt файлы от скрапера
+├── dataset_raw.csv   ← собранный датасет до чистки
+└── dataset_clean.csv ← чистый датасет
+```
+
+---
+
+## АРХИТЕКТУРА ПРОЕКТА
+
+```
+erowid-nlp/
+├── .cursorrules              ← этот файл
+├── AGENTS.md                 ← подробная документация для агентов
+├── EROWID-2026/              ← ИСТОРИЧЕСКИЕ ДАННЫЕ (readonly!)
+│   ├── core-experiences_2016/
+│   ├── experiences_2016/
+│   ├── test/
+│   ├── analysis.py           ← baseline LSA 2016 (readonly!)
+│   ├── erowid-scrape.py
+│   └── stopwords_en.txt
+├── data/                     ← новые данные (создаётся скрапером)
+│   ├── raw/
+│   ├── dataset_raw.csv
+│   └── dataset_clean.csv
+├── notebooks/                ← Jupyter/Colab notebooks
+│   ├── 01_eda.ipynb
+│   ├── 02_embeddings.ipynb
+│   ├── 03_classification.ipynb
+│   ├── 04_clustering_bertopic.ipynb
+│   ├── 05_harm_reduction.ipynb
+│   ├── 06_shap.ipynb
+│   └── 07_comparison_2016.ipynb
+├── src/
+│   ├── scraper.py            ← обновлённый скрапер
+│   ├── embeddings.py         ← sentence-transformers pipeline
+│   ├── classify.py           ← классификатор вещества
+│   └── harm_reduction.py     ← harm reduction модуль
+├── app.py                    ← Gradio app (HuggingFace Spaces)
+├── embeddings.npy            ← предпосчитанные эмбеддинги (большой файл)
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## ТЕХНОЛОГИЧЕСКИЙ СТЕК
+
+| Задача | Библиотека |
+|--------|-----------|
+| Embeddings | sentence-transformers (all-mpnet-base-v2) |
+| Классификация | distilbert-base-uncased (fine-tune) + LightGBM |
+| Topic modeling | BERTopic |
+| Dim reduction | UMAP |
+| Clustering | HDBSCAN |
+| Interpretability | SHAP (shap) |
+| Visualization | Plotly, matplotlib |
+| UI/Demo | Gradio |
+| Stats | pandas, scipy, statsmodels |
+| Scraping | BeautifulSoup4, requests |
+| Baseline (2016) | sklearn TF-IDF + LogisticRegression + LSA |
+
+Python 3.11+, обучение на Google Colab T4 GPU.
+
+---
+
+## ПРАВИЛА ДЛЯ АГЕНТА
+
+### ✅ Можно:
+- Создавать новые файлы в `src/`, `notebooks/`, `data/`
+- Обновлять `erowid-scrape.py` (но не ломать совместимость с форматом данных)
+- Добавлять зависимости в `requirements.txt`
+- Исправлять TODO в коде (коммитить как отдельные маленькие PR)
+- Редактировать `app.py`, `README.md`
+
+### ❌ Нельзя:
+- Удалять или изменять файлы в `EROWID-2026/core-experiences_2016/`
+- Удалять или изменять файлы в `EROWID-2026/experiences_2016/`
+- Переименовывать папки с историческими данными
+- Делать git reset/clean без явного подтверждения
+
+### 📝 Логи изменений (dev-log)
+
+- Вести разработческий дневник в `dev-log/` с файлами по датам: `YYYY-MM-DD.md`
+- Для каждого изменения кода в течение дня сразу добавлять короткую запись в файл за этот день
+- Писать записи и заголовки в dev-log на английском, в свободной форме, без формального стиля
+
+### 🔍 Перед любым рефакторингом:
+1. Убедись что не затрагиваешь исторические данные
+2. Проверь что новый код не ломает чтение из `EROWID-2026/`
+3. Тестируй на `test/` папке сначала
+
+---
+
+## КЛЮЧЕВЫЕ ПЕРЕМЕННЫЕ И КОНСТАНТЫ
+
+```python
+# Пути к данным
+HISTORICAL_2016_DIR = "EROWID-2026/experiences_2016/"
+CORE_2016_DIR       = "EROWID-2026/core-experiences_2016/"
+NEW_DATA_DIR        = "data/raw/"
+DATASET_CLEAN       = "data/dataset_clean.csv"
+EMBEDDINGS_FILE     = "embeddings.npy"
+
+# Колонки датасета
+COLUMNS = ["substance", "title", "text", "date", "rating", "word_count", "era"]
+# era: "pre-2016" или "post-2016" — для временного сравнения
+
+# Модель
+EMBEDDING_MODEL = "all-mpnet-base-v2"
+CLASSIFIER_MODEL = "distilbert-base-uncased"
+```
+
+---
+
+## NAMING CONVENTIONS
+
+- Файлы: `snake_case.py`
+- Классы: `PascalCase`
+- Переменные/функции: `snake_case`
+- Константы: `UPPER_SNAKE_CASE`
+- Notebooks: `NN_название.ipynb` (с номером этапа)
+
+---
+
+## TODO — СПИСОК ЗАДАЧ ИЗ ОРИГИНАЛА
+
+При нахождении TODO в коде — исправляй, коммить отдельно с сообщением:
+`fix: resolve TODO - <описание>`
+
+Это нужно для GitHub активности и статистики проекта.
+
+---
+
+## КОНТЕКСТ ПРОЕКТА
+
+- **Автор:** yava-code
+- **HuggingFace:** yava-code/erowid-nlp
+- **Оригинальный репо:** github.com/Monkeyanator/erowid-lsa (2016)
+- **Среда обучения:** Google Colab T4 GPU
+- **Деплой:** HuggingFace Spaces (Gradio)
+
+Если что-то непонятно — читай `AGENTS.md` для более подробного контекста.
